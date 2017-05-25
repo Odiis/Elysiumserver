@@ -1202,11 +1202,10 @@ void Player::Update(uint32 update_diff, uint32 p_time)
         UpdateMeleeAttackingState();
 
         Unit *pVictim = getVictim();
-        if (pVictim && !IsNonMeleeSpellCasted(false) && CanReachWithMeleeAttack(pVictim))
+        if (pVictim && !IsNonMeleeSpellCasted(false))
         {
             Player *vOwner = pVictim->GetCharmerOrOwnerPlayerOrPlayerItself();
-            if ((vOwner && vOwner->IsPvP() && !IsInDuelWith(vOwner)) ||  // PvP flagged players
-                (pVictim->IsCreature() && pVictim->IsPvP()))             // PvP flagged creatures
+            if (vOwner && vOwner->IsPvP() && !IsInDuelWith(vOwner))
             {
                 UpdatePvP(true);
                 RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_ENTER_PVP_COMBAT);
@@ -2799,17 +2798,6 @@ void Player::InitStatsForLevel(bool reapplyMods)
 
     // set default cast time multiplier
     SetFloatValue(UNIT_MOD_CAST_SPEED, 1.0f);
-
-    // Reset Size Before Reapplying Auras
-    if (getRace() == RACE_TAUREN)
-    {
-        if (getGender() == GENDER_MALE)
-            SetObjectScale(DEFAULT_TAUREN_MALE_SCALE);
-        else
-            SetObjectScale(DEFAULT_TAUREN_FEMALE_SCALE);
-    }
-    else
-        SetObjectScale(DEFAULT_OBJECT_SCALE);
 
     // save base values (bonuses already included in stored stats)
     for (int i = STAT_STRENGTH; i < MAX_STATS; ++i)
@@ -6295,7 +6283,7 @@ void Player::UpdateZone(uint32 newZone, uint32 newArea)
 
     if (pvpInfo.inHostileArea)                              // in hostile area
     {
-        if ((!IsPvP() && !IsTaxiFlying()) || pvpInfo.endTimer != 0)
+        if (!IsPvP() || pvpInfo.endTimer != 0)
             UpdatePvP(true, true);
     }
     else                                                    // in friendly area
@@ -9742,7 +9730,16 @@ InventoryResult Player::CanUseItem(ItemPrototype const *pProto, bool not_loading
         if (pProto->RequiredSpell != 0 && !HasSpell(pProto->RequiredSpell))
             return EQUIP_ERR_NO_REQUIRED_PROFICIENCY;
 
-        if (not_loading && m_honorMgr.GetHighestRank().rank < (uint8)pProto->RequiredHonorRank)
+        
+        auto playerRank = m_honorMgr.GetHighestRank().rank;
+        
+        if (sWorld.getConfig(CONFIG_BOOL_ACCURATE_PVP_EQUIP_REQUIREMENTS)
+            && sWorld.GetWowPatch() < WOW_PATCH_106)
+        {
+            playerRank = m_honorMgr.GetRank().rank;
+        }
+
+        if (not_loading && playerRank < (uint8)pProto->RequiredHonorRank)
             return EQUIP_ERR_CANT_EQUIP_RANK;
 
         if (getLevel() < pProto->RequiredLevel)
@@ -12075,12 +12072,12 @@ bool Player::CanSeeStartQuest(Quest const *pQuest) const
     return false;
 }
 
-bool Player::CanTakeQuest(Quest const *pQuest, bool msg) const
+bool Player::CanTakeQuest(Quest const *pQuest, bool msg, bool skipStatusCheck /*false*/) const
 {
     if (pQuest->GetType() == QUEST_TYPE_PVP && pQuest->GetQuestLevel() && pQuest->GetQuestLevel() < getLevel())
         return false;
 
-    return SatisfyQuestStatus(pQuest, msg) && SatisfyQuestExclusiveGroup(pQuest, msg) &&
+    return (skipStatusCheck || SatisfyQuestStatus(pQuest, msg)) && SatisfyQuestExclusiveGroup(pQuest, msg) &&
            SatisfyQuestClass(pQuest, msg) && SatisfyQuestRace(pQuest, msg) && SatisfyQuestLevel(pQuest, msg) &&
            SatisfyQuestSkill(pQuest, msg) && SatisfyQuestReputation(pQuest, msg) &&
            SatisfyQuestPreviousQuest(pQuest, msg) && SatisfyQuestTimed(pQuest, msg) &&
@@ -12199,11 +12196,21 @@ bool Player::CanCompleteRepeatableQuest(Quest const *pQuest) const
 
 bool Player::CanRewardQuest(Quest const *pQuest, bool msg) const
 {
-    // not auto complete quest and not completed quest (only cheating case, then ignore without message)
-    if (!pQuest->IsAutoComplete() && GetQuestStatus(pQuest->GetQuestId()) != QUEST_STATUS_COMPLETE)
-        return false;
+    // Prevent packet-editing exploits
+    // Players must meet prereqs for AutoComplete quests
+    if (pQuest->IsAutoComplete())
+    {
+        if (!CanTakeQuest(pQuest, false, true))
+            return false;
+    }
+    else
+    {
+        // Normal quests must be accepted and have a complete status
+        if (GetQuestStatus(pQuest->GetQuestId()) != QUEST_STATUS_COMPLETE)
+            return false;
+    }
 
-    // rewarded and not repeatable quest (only cheating case, then ignore without message)
+    // Prevent completing the same quest twice
     if (GetQuestRewardStatus(pQuest->GetQuestId()))
         return false;
 
@@ -12222,9 +12229,12 @@ bool Player::CanRewardQuest(Quest const *pQuest, bool msg) const
         }
     }
 
-    // prevent receive reward with low money and GetRewOrReqMoney() < 0
+    // Check if players have enough money to complete the quest
     if (pQuest->GetRewOrReqMoney() < 0 && GetMoney() < uint32(-pQuest->GetRewOrReqMoney()))
+    {
+        SendCanTakeQuestResponse(INVALIDREASON_QUEST_FAILED_NOT_ENOUGH_MONEY);
         return false;
+    }
 
     return true;
 }
@@ -12342,10 +12352,6 @@ void Player::AddQuest(Quest const *pQuest, Object *questGiver)
     }
     else
         questStatusData.m_timer = 0;
-
-    // Set PvP flag for PvP quests
-    if (pQuest->GetType() == QUEST_TYPE_PVP)
-        UpdatePvP(true, true);
 
     SetQuestSlot(log_slot, quest_id, qtime);
 
@@ -16966,8 +16972,11 @@ bool Player::BuyItemFromVendor(ObjectGuid vendorGuid, uint32 item, uint8 count, 
         return false;
     }
 
+    auto playerRank = sWorld.getConfig(CONFIG_BOOL_ACCURATE_PVP_PURCHASE_REQUIREMENTS) ?
+        m_honorMgr.GetRank().rank: m_honorMgr.GetHighestRank().rank;
+
     // not check level requiremnt for normal items (PvP related bonus items is another case)
-    if (pProto->RequiredHonorRank && (m_honorMgr.GetHighestRank().rank < (uint8)pProto->RequiredHonorRank || getLevel() < pProto->RequiredLevel))
+    if (pProto->RequiredHonorRank && (playerRank < (uint8)pProto->RequiredHonorRank || getLevel() < pProto->RequiredLevel))
     {
         SendBuyError(BUY_ERR_RANK_REQUIRE, pCreature, item, 0);
         return false;
@@ -17874,7 +17883,7 @@ float Player::GetReputationPriceDiscount(Creature const* pCreature) const
         case 81: // Thunder Bluff
         case 530: // Darkspear
             // Reduction si grade >= 3
-            if (m_honorMgr.GetHighestRank().visualRank >= 3)
+            if (m_honorMgr.GetRank().visualRank >= 3)
                 mod -= 0.1f;
             break;
     }
