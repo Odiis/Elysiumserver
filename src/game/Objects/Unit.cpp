@@ -1287,7 +1287,7 @@ void Unit::CastSpell(Unit* Victim, SpellEntry const *spellInfo, bool triggered, 
             targets.setSource(caster->GetPositionX(), caster->GetPositionY(), caster->GetPositionZ());
 
     spell->SetCastItem(castItem);
-    spell->prepare(&targets, triggeredByAura);
+    spell->prepare(std::move(targets), triggeredByAura);
 }
 
 void Unit::CastCustomSpell(Unit* Victim, uint32 spellId, int32 const* bp0, int32 const* bp1, int32 const* bp2, bool triggered, Item *castItem, Aura* triggeredByAura, ObjectGuid originalCaster, SpellEntry const* triggeredBy)
@@ -1342,7 +1342,7 @@ void Unit::CastCustomSpell(Unit* Victim, SpellEntry const *spellInfo, int32 cons
     SpellCastTargets targets;
     targets.setUnitTarget(Victim);
     spell->SetCastItem(castItem);
-    spell->prepare(&targets, triggeredByAura);
+    spell->prepare(std::move(targets), triggeredByAura);
 }
 
 // used for scripting
@@ -1390,7 +1390,7 @@ void Unit::CastSpell(float x, float y, float z, SpellEntry const *spellInfo, boo
     SpellCastTargets targets;
     targets.setDestination(x, y, z);
     spell->SetCastItem(castItem);
-    spell->prepare(&targets, triggeredByAura);
+    spell->prepare(std::move(targets), triggeredByAura);
 }
 
 // Obsolete func need remove, here only for comotability vs another patches
@@ -3387,7 +3387,7 @@ void Unit::_UpdateAutoRepeatSpell()
 
         // we want to shoot
         Spell* spell = new Spell(this, m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_spellInfo, true);
-        spell->prepare(&(m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_targets));
+        spell->prepare(m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_targets);
 
         // all went good, reset attack
         resetAttackTimer(RANGED_ATTACK);
@@ -11162,15 +11162,15 @@ void Unit::SetMovement(UnitMovementType pType)
         mePlayer->GetCheatData()->OrderSent(&data);
         mePlayer->GetSession()->SendPacket(&data);
         
-        // Send root messages now rather than on acks from the force messages
-        // so our state is consistent
-        if (pType == MOVE_ROOT || pType == MOVE_UNROOT) {
+        // We can't send movement info here because it is out-of-date with the client
+        // and causes issues with unit speed updates on death/res
+        /*if (pType == MOVE_ROOT || pType == MOVE_UNROOT) {
             WorldPacket rootData(pType == MOVE_ROOT ? MSG_MOVE_ROOT : MSG_MOVE_UNROOT, 31);
             rootData << GetPackGUID();
             rootData << m_movementInfo;
             
             mePlayer->SendMovementMessageToSet(std::move(rootData), false);
-        }
+        }*/
     }
     if (controller)
         controller->GetSession()->SendPacket(&data);

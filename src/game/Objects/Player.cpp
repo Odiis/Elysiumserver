@@ -4738,9 +4738,9 @@ void Player::CleanupChannels()
     {
         Channel* ch = *m_channels.begin();
         m_channels.erase(m_channels.begin());               // remove from player's channel list
-        ch->Leave(GetObjectGuid(), ch->GetName().c_str(), false);   // not send to client, not remove from player's channel list
+        ch->Leave(GetObjectGuid(), false);                  // not send to client, not remove from player's channel list
         if (ChannelMgr* cMgr = channelMgr(GetTeam()))
-            cMgr->LeftChannel(ch->GetName(), nullptr);      // deleted channel if empty
+            cMgr->LeftChannel(ch->GetName());               // deleted channel if empty
 
     }
     DEBUG_LOG("Player: channels cleaned up!");
@@ -4757,7 +4757,7 @@ void Player::LeaveLFGChannel()
     {
         if ((*i)->IsLFG())
         {
-            (*i)->Leave(GetObjectGuid(), (*i)->GetName().c_str());
+            (*i)->Leave(GetObjectGuid());
             break;
         }
     }
@@ -5437,6 +5437,19 @@ void Player::SetSkill(uint16 id, uint16 currVal, uint16 maxVal, uint16 step /*=0
         }
         else                                                //remove
         {
+            // Unapply skill bonuses
+            // temporary bonuses
+            AuraList const& mModSkill = GetAurasByType(SPELL_AURA_MOD_SKILL);
+            for (AuraList::const_iterator j = mModSkill.begin(); j != mModSkill.end(); ++j)
+                if ((*j)->GetModifier()->m_miscvalue == int32(id))
+                    (*j)->ApplyModifier(false);
+
+            // permanent bonuses
+            AuraList const& mModSkillTalent = GetAurasByType(SPELL_AURA_MOD_SKILL_TALENT);
+            for (AuraList::const_iterator j = mModSkillTalent.begin(); j != mModSkillTalent.end(); ++j)
+                if ((*j)->GetModifier()->m_miscvalue == int32(id))
+                    (*j)->ApplyModifier(false);
+
             // clear skill fields
             SetUInt32Value(PLAYER_SKILL_INDEX(itr->second.pos), 0);
             SetUInt32Value(PLAYER_SKILL_VALUE_INDEX(itr->second.pos), 0);
@@ -6978,7 +6991,7 @@ void Player::CastItemUseSpell(Item *item, SpellCastTargets const& targets)
 
         Spell *spell = new Spell(this, spellInfo, (count > 0));
         spell->SetCastItem(item);
-        spell->prepare(&targets);
+        spell->prepare(targets);
 
         ++count;
     }
