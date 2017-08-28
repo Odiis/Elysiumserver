@@ -553,14 +553,6 @@ namespace Movement
     class MoveSpline;
 }
 
-enum DiminishingLevels
-{
-    DIMINISHING_LEVEL_1             = 0,
-    DIMINISHING_LEVEL_2             = 1,
-    DIMINISHING_LEVEL_3             = 2,
-    DIMINISHING_LEVEL_IMMUNE        = 3
-};
-
 struct DiminishingReturn
 {
     DiminishingReturn(DiminishingGroup group, uint32 t, uint32 count)
@@ -1412,6 +1404,7 @@ class MANGOS_DLL_SPEC Unit : public WorldObject
         void RemoveGuardian(Pet* pet);
         void RemoveGuardians();
         Pet* FindGuardianWithEntry(uint32 entry);
+        uint32 GetGuardianCountWithEntry(uint32 entry);
 
         bool isCharmed() const { return !GetCharmerGuid().IsEmpty(); }
 
@@ -1495,6 +1488,7 @@ class MANGOS_DLL_SPEC Unit : public WorldObject
         // delayed+channeled spells are always accounted as casted
         // we can skip channeled or delayed checks using flags
         bool IsNonMeleeSpellCasted(bool withDelayed = false, bool skipChanneled = false, bool skipAutorepeat = false) const;
+        bool IsNextSwingSpellCasted() const;
         // for movement generators, check if current casted spell has movement interrupt flags
         bool IsNoMovementSpellCasted() const;
         
@@ -1975,6 +1969,9 @@ class MANGOS_DLL_SPEC Unit : public WorldObject
         DamageTakenHistoryMap   _damageTakenHistory;
         uint32                  _lastDamageTaken;
 
+        float m_nativeScale = 1.0f;
+        float m_nativeScaleOverride = 1.0f;
+
     private:
         void CleanupDeletedAuras();
         void UpdateSplineMovement(uint32 t_diff);
@@ -2010,9 +2007,6 @@ class MANGOS_DLL_SPEC Unit : public WorldObject
         GuardianPetList m_guardianPets;
 
         ObjectGuid m_TotemSlot[MAX_TOTEM_SLOT];
-
-        float m_nativeScale = 1;
-        float m_nativeScaleOverride = 1;
 
         // Error traps for some wrong args using
         // this will catch and prevent build for any cases when all optional args skipped and instead triggered used non boolean type

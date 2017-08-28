@@ -1205,10 +1205,11 @@ void Player::Update(uint32 update_diff, uint32 p_time)
         UpdateMeleeAttackingState();
 
         Unit *pVictim = getVictim();
-        if (pVictim && !IsNonMeleeSpellCasted(false))
+        if (pVictim && !IsNonMeleeSpellCasted(false) && CanReachWithMeleeAttack(pVictim))
         {
             Player *vOwner = pVictim->GetCharmerOrOwnerPlayerOrPlayerItself();
-            if (vOwner && vOwner->IsPvP() && !IsInDuelWith(vOwner))
+            if ((vOwner && vOwner->IsPvP() && !IsInDuelWith(vOwner)) ||  // PvP flagged players
+                (pVictim->IsCreature() && pVictim->IsPvP()))             // PvP flagged creatures
             {
                 UpdatePvP(true);
                 RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_ENTER_PVP_COMBAT);
@@ -1225,7 +1226,7 @@ void Player::Update(uint32 update_diff, uint32 p_time)
             {
                 float bubble = 0.125f * sWorld.getConfig(CONFIG_FLOAT_RATE_REST_INGAME);
                 //speed collect rest bonus (section/in hour)
-                SetRestBonus(float(GetRestBonus() + time_inn * (GetUInt32Value(PLAYER_NEXT_LEVEL_XP) / 72000)*bubble));
+                SetRestBonus(GetRestBonus() + time_inn * ((float)GetUInt32Value(PLAYER_NEXT_LEVEL_XP) / 72000)*bubble);
                 UpdateInnerTime(time(NULL));
             }
         }
@@ -2083,6 +2084,9 @@ void Player::restorePendingTeleport()
 
 bool Player::TeleportToBGEntryPoint()
 {
+    if (m_bgData.joinPos.coord_x == 0.0f && m_bgData.joinPos.coord_y == 0.0f && m_bgData.joinPos.coord_z == 0.0f)
+        m_bgData.joinPos = WorldLocation(m_homebindMapId, m_homebindX, m_homebindY, m_homebindZ, 0.0f);
+
     return TeleportTo(m_bgData.joinPos);
 }
 
@@ -2681,7 +2685,30 @@ void Player::GiveLevel(uint32 level)
     if (level == getLevel())
         return;
 
-    sLog.out(LOG_LEVELUP, "Character %s:%u [c%u r%u] reaches level %2u", GetName(), GetGUIDLow(), getClass(), getRace(), level);
+    std::stringstream groupInfo;
+    if (GetGroup())
+    {
+        bool first = true;
+        for (GroupReference* itr = GetGroup()->GetFirstMember(); itr != nullptr; itr = itr->next())
+        {
+            if (Player *player = itr->getSource())
+            {
+                if (!first)
+                    groupInfo << ", ";
+
+                groupInfo << player->GetName();
+
+                first = false;
+            }
+        }
+    }
+    else
+        groupInfo << "None";
+
+    sLog.out(LOG_LEVELUP, "Character %s:%u [c%u r%u] reaches level %2u, zone %u, pos: [%0.2f, %0.2f, %0.2f] [Group: %s]",
+        GetName(), GetGUIDLow(), getClass(), getRace(), level, GetZoneId(), GetPositionX(), GetPositionY(), GetPositionZ(),
+        groupInfo.str().c_str());
+
     PlayerLevelInfo info;
     sObjectMgr.GetPlayerLevelInfo(getRace(), getClass(), level, &info);
 
@@ -6091,7 +6118,7 @@ void Player::RewardReputation(Unit *pVictim, float rate)
         {
             FactionEntry const *team1_factionEntry = sFactionStore.LookupEntry(factionEntry1->team);
             if (team1_factionEntry)
-                GetReputationMgr().ModifyReputation(team1_factionEntry, donerep1 / 2);
+                GetReputationMgr().ModifyReputation(team1_factionEntry, donerep1 / 2, true);
         }
     }
 
@@ -6109,7 +6136,7 @@ void Player::RewardReputation(Unit *pVictim, float rate)
         {
             FactionEntry const *team2_factionEntry = sFactionStore.LookupEntry(factionEntry2->team);
             if (team2_factionEntry)
-                GetReputationMgr().ModifyReputation(team2_factionEntry, donerep2 / 2);
+                GetReputationMgr().ModifyReputation(team2_factionEntry, donerep2 / 2, true);
         }
     }
 }
@@ -6317,7 +6344,7 @@ void Player::UpdateZone(uint32 newZone, uint32 newArea)
 
     if (pvpInfo.inHostileArea)                              // in hostile area
     {
-        if (!IsPvP() || pvpInfo.endTimer != 0)
+        if ((!IsPvP() && !IsTaxiFlying()) || pvpInfo.endTimer != 0)
             UpdatePvP(true, true);
     }
     else                                                    // in friendly area
@@ -11522,7 +11549,7 @@ void Player::SendItemDurations()
         (*itr)->SendTimeUpdate(this);
 }
 
-void Player::SendNewItem(Item *item, uint32 count, bool received, bool created, bool broadcast)
+void Player::SendNewItem(Item *item, uint32 count, bool received, bool created, bool broadcast /*=false*/, bool showInChat /*=true*/)
 {
     if (!item)                                              // prevent crash
         return;
@@ -11532,7 +11559,7 @@ void Player::SendNewItem(Item *item, uint32 count, bool received, bool created, 
     data << GetObjectGuid();                                // player GUID
     data << uint32(received);                               // 0=looted, 1=from npc
     data << uint32(created);                                // 0=received, 1=created
-    data << uint32(1);                                      // IsShowChatMessage
+    data << uint32(showInChat);                             // showInChat
     data << uint8(item->GetBagSlot());                      // bagslot
     // item slot, but when added to stack: 0xFFFFFFFF
     data << uint32((item->GetCount() == count) ? item->GetSlot() : -1);
@@ -12458,6 +12485,10 @@ void Player::AddQuest(Quest const *pQuest, Object *questGiver)
     else
         questStatusData.m_timer = 0;
 
+    // Set PvP flag for PvP quests
+    if (pQuest->GetType() == QUEST_TYPE_PVP)
+        UpdatePvP(true, true);
+
     SetQuestSlot(log_slot, quest_id, qtime);
 
     if (questStatusData.uState != QUEST_NEW)
@@ -12650,7 +12681,7 @@ void Player::RewardQuest(Quest const *pQuest, uint32 reward, WorldObject* questG
             if (CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, itemId, pQuest->RewChoiceItemCount[reward]) == EQUIP_ERR_OK)
             {
                 Item* item = StoreNewItem(dest, itemId, true, Item::GenerateItemRandomPropertyId(itemId));
-                SendNewItem(item, pQuest->RewChoiceItemCount[reward], true, false);
+                SendNewItem(item, pQuest->RewChoiceItemCount[reward], true, false, false, false);
             }
         }
     }
@@ -12665,7 +12696,7 @@ void Player::RewardQuest(Quest const *pQuest, uint32 reward, WorldObject* questG
                 if (CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, itemId, pQuest->RewItemCount[i]) == EQUIP_ERR_OK)
                 {
                     Item* item = StoreNewItem(dest, itemId, true, Item::GenerateItemRandomPropertyId(itemId));
-                    SendNewItem(item, pQuest->RewItemCount[i], true, false);
+                    SendNewItem(item, pQuest->RewItemCount[i], true, false, false, false);
                 }
             }
         }
@@ -13665,7 +13696,8 @@ void Player::TalkedToCreature(uint32 entry, ObjectGuid guid)
 
 void Player::LogModifyMoney(int32 d, const char* type, ObjectGuid fromGuid, uint32 data)
 {
-    if (uint32(abs(d)) > sWorld.getConfig(CONFIG_UINT32_LOG_MONEY_TRADES_TRESHOLD))
+    // Always log GM transactions regardless of threshold
+    if (uint32(abs(d)) > sWorld.getConfig(CONFIG_UINT32_LOG_MONEY_TRADES_TRESHOLD) || GetSession()->GetSecurity() > SEC_PLAYER)
     {
         sLog.out(LOG_MONEY_TRADES, "[%s] %s gets %ic (data: %u|%s)", type, GetShortDescription().c_str(), d, data, fromGuid.GetString().c_str());
         if (d > 0)
@@ -17170,7 +17202,7 @@ bool Player::BuyItemFromVendor(ObjectGuid vendorGuid, uint32 item, uint8 count, 
             return false;
         }
 
-        ModifyMoney(-int32(price));
+        LogModifyMoney(-int32(price), "BuyItem", vendorGuid, item);
 
         pItem = StoreNewItem(dest, item, true);
     }
@@ -17190,7 +17222,7 @@ bool Player::BuyItemFromVendor(ObjectGuid vendorGuid, uint32 item, uint8 count, 
             return false;
         }
 
-        ModifyMoney(-int32(price));
+        LogModifyMoney(-int32(price), "BuyItem", vendorGuid, item);
 
         pItem = EquipNewItem(dest, item, true);
 
@@ -19131,7 +19163,10 @@ void Player::HandleFall(MovementInfo const& movementInfo)
 
         if (damageperc > 0)
         {
-            uint32 damage = (uint32)(damageperc * GetMaxHealth() * sWorld.getConfig(CONFIG_FLOAT_RATE_DAMAGE_FALL));
+            float TakenTotalMod = 1.0f;
+            TakenTotalMod *= GetTotalAuraMultiplierByMiscMask(SPELL_AURA_MOD_DAMAGE_PERCENT_TAKEN, SPELL_SCHOOL_MASK_NORMAL);
+
+            uint32 damage = (uint32)(damageperc * GetMaxHealth() * sWorld.getConfig(CONFIG_FLOAT_RATE_DAMAGE_FALL) * TakenTotalMod);
 
             float height = movementInfo.GetPos()->z;
             UpdateAllowedPositionZ(movementInfo.GetPos()->x, movementInfo.GetPos()->y, height);
@@ -19349,7 +19384,7 @@ void Player::_SaveBGData()
 
     stmt.PExecute(GetGUIDLow());
 
-    if (m_bgData.bgInstanceID)
+    if (m_bgData.bgInstanceID || InBattleGroundQueue())
     {
         stmt = CharacterDatabase.CreateStatement(insBGData, "INSERT INTO character_battleground_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
         /* guid, bgInstanceID, bgTeam, x, y, z, o, map */

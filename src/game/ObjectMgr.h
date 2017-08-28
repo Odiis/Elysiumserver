@@ -117,6 +117,15 @@ struct MangosStringLocale
     uint32 Emote;
 };
 
+struct QuestGreetingLocale
+{
+    QuestGreetingLocale() : Emote(0), EmoteDelay(0) { }
+
+    std::vector<std::string> Content;                       // 0 -> default, i -> i-1 locale index
+    uint16 Emote;
+    uint32 EmoteDelay;
+};
+
 typedef UNORDERED_MAP<uint32,CreatureData> CreatureDataMap;
 typedef CreatureDataMap::value_type CreatureDataPair;
 
@@ -170,6 +179,7 @@ typedef UNORDERED_MAP<uint32,QuestLocale> QuestLocaleMap;
 typedef UNORDERED_MAP<uint32,NpcTextLocale> NpcTextLocaleMap;
 typedef UNORDERED_MAP<uint32,PageTextLocale> PageTextLocaleMap;
 typedef UNORDERED_MAP<int32,MangosStringLocale> MangosStringLocaleMap;
+typedef UNORDERED_MAP<uint32,QuestGreetingLocale> QuestGreetingLocaleMap;
 typedef UNORDERED_MAP<uint32,GossipMenuItemsLocale> GossipMenuItemsLocaleMap;
 typedef UNORDERED_MAP<uint32,PointOfInterestLocale> PointOfInterestLocaleMap;
 typedef UNORDERED_MAP<uint32,AreaLocale> AreaLocaleMap;
@@ -475,17 +485,16 @@ enum PermVariables
     // ITEM ID RANGES ARE USED FOR AQ WAR EFFORT
 
     // Dragons of Nightmare support
-    VAR_ALIVE_COUNT = 30000,    // how many dragons should be alive atm (updated once dragon is killed)
-    VAR_REQ_UPDATE  = 30001,    // should keep >=1 if the last alive dragon was killed and the repawn time is not saved yet, 0 otherwise
+    VAR_ALIVE_COUNT = 30000,    // unused
+    VAR_REQ_UPDATE  = 30001,    // keep at DEF_STOP_DELAY unless all dragons are dead
     VAR_RESP_TIME   = 30002,    // next event time; should be set in here once last dragon is killed
-    VAR_REQ_PERM    = 30003,    // permutation required
+    VAR_REQ_PERM    = 30003,    // unused
     VAR_PERM_1      = 30004,    // saved permutation result
     VAR_PERM_2      = 30005,
     VAR_PERM_3      = 30006,
     VAR_PERM_4      = 30007,
 
     DEF_ALIVE_COUNT = 4,        // default alive dragons count for VAR_ALIVE_COUNT
-    DEF_REQ_UPDATE  = 0,        // default update requirement for VAR_REQ_UPDATE
     DEF_STOP_DELAY  = 5,        // default times event check will not stop the event
 
     NPC_YSONDRE     = 14887,
@@ -750,6 +759,7 @@ class ObjectMgr
         bool LoadMangosStrings(DatabaseType& db, char const* table, int32 min_value, int32 max_value, bool extra_content);
         bool LoadMangosStrings() { return LoadMangosStrings(WorldDatabase,"mangos_string",MIN_MANGOS_STRING_ID,MAX_MANGOS_STRING_ID, false); }
         bool LoadNostalriusStrings();
+        bool LoadQuestGreetings();
         void LoadPetCreateSpells();
         void LoadCreatureLocales();
         void LoadCreatureTemplates();
@@ -1001,6 +1011,13 @@ class ObjectMgr
         const char *GetMangosStringForDBCLocale(int32 entry) const { return GetMangosString(entry,DBCLocaleIndex); }
         int32 GetDBCLocaleIndex() const { return DBCLocaleIndex; }
         void SetDBCLocaleIndex(uint32 lang) { DBCLocaleIndex = GetIndexForLocale(LocaleConstant(lang)); }
+
+        QuestGreetingLocale const* GetQuestGreetingLocale(int32 entry) const
+        {
+            auto itr = mQuestGreetingLocaleMap.find(entry);
+            if (itr == mQuestGreetingLocaleMap.end()) return nullptr;
+            return &itr->second;
+        }
 
         // global grid objects state (static DB spawns, global spawn mods from gameevent system)
         CellObjectGuids const& GetCellObjectGuids(uint16 mapid, uint32 cell_id)
@@ -1330,6 +1347,7 @@ class ObjectMgr
         NpcTextLocaleMap mNpcTextLocaleMap;
         PageTextLocaleMap mPageTextLocaleMap;
         MangosStringLocaleMap mMangosStringLocaleMap;
+        QuestGreetingLocaleMap mQuestGreetingLocaleMap;
         GossipMenuItemsLocaleMap mGossipMenuItemsLocaleMap;
         PointOfInterestLocaleMap mPointOfInterestLocaleMap;
         AreaLocaleMap mAreaLocaleMap;
