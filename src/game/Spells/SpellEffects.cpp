@@ -2084,6 +2084,9 @@ void Spell::EffectApplyAura(SpellEffectIndex eff_idx)
     else if (m_spellInfo->Id == 13278)
         m_currentBasePoints[eff_idx] = eff_idx == EFFECT_INDEX_0 ? int32(urand(600, 1200) * (caster->getLevel() / 60.0f)) * (!urand(0,6) ? 2 : 1)
                                                                  : m_currentBasePoints[EFFECT_INDEX_0] * 0.1249f;
+    // Paladin T3 JoL
+    else if (m_spellInfo->IsFitToFamilyMask<CF_PALADIN_JUDGEMENT_OF_WISDOM_LIGHT>() && m_spellInfo->SpellIconID == 299 && m_caster->HasAura(28775))
+        m_currentBasePoints[eff_idx] = 20;
 
     Aura* aur = CreateAura(m_spellInfo, eff_idx, &m_currentBasePoints[eff_idx], m_spellAuraHolder, unitTarget, caster, m_CastItem);
     m_spellAuraHolder->AddAura(aur, eff_idx);
@@ -2236,6 +2239,10 @@ void Spell::EffectHeal(SpellEffectIndex /*eff_idx*/)
 
             addhealth += tickheal * tickcount;
         }
+
+        // JoL - Extra heal stored in m_triggeredByAuraBasePoints
+        if (m_spellInfo->SpellIconID == 299 && m_spellInfo->SpellVisual == 5560 && m_spellInfo->SpellFamilyFlags == 0 && m_triggeredByAuraBasePoints > 0)
+            addhealth += m_triggeredByAuraBasePoints;
 
         addhealth = caster->SpellHealingBonusDone(unitTarget, m_spellInfo, addhealth, HEAL, 1, this);
         addhealth = unitTarget->SpellHealingBonusTaken(caster, m_spellInfo, addhealth, HEAL, 1, this);
@@ -3296,23 +3303,63 @@ void Spell::EffectSummonGuardian(SpellEffectIndex eff_idx)
 
         m_caster->AddGuardian(spawnCreature);
 
-        // Kilrogg eye
-        if (m_spellInfo->Id == 126)
-            spawnCreature->SetWalk(false);
-
         map->Add((Creature*)spawnCreature);
 
         // Notify Summoner
         if (m_caster->GetTypeId() == TYPEID_UNIT && ((Creature*)m_caster)->AI())
             ((Creature*)m_caster)->AI()->JustSummoned(spawnCreature);
-        // Kilrogg eye
-        if (m_spellInfo->Id == 126)
-            if (Player* p = m_caster->ToPlayer())
+
+        switch (m_spellInfo->Id)
+        {
+            case 126: // Eye of Kilrogg
             {
-                // Stealth
-                spawnCreature->CastSpell(spawnCreature, 2585, true);
-                p->ModPossessPet(spawnCreature, true, AURA_REMOVE_BY_DEFAULT);
+                spawnCreature->SetWalk(false);
+                if (Player* p = m_caster->ToPlayer())
+                {
+                    // Stealth
+                    spawnCreature->CastSpell(spawnCreature, 2585, true);
+                    p->ModPossessPet(spawnCreature, true, AURA_REMOVE_BY_DEFAULT);
+                }
+                break;
             }
+            case 17166: // Release Umi's Yeti - Quest Are We There, Yeti? Part 3
+            {
+                spawnCreature->MonsterTextEmote(-1900169);
+                spawnCreature->MonsterSay(-1900170);
+
+                switch (spawnCreature->GetAreaId())
+                {
+                    case 541: // Un'Goro Crater
+                        if (Creature* pCreature = spawnCreature->FindNearestCreature(10977, 30.0f, true)) // NPC_QUIXXIL
+                        {
+                            spawnCreature->GetMotionMaster()->MoveFollow(pCreature, 0.6f, M_PI_F);
+                            pCreature->MonsterSay(-1900171);
+                            pCreature->SetWalk(false);
+                            pCreature->GetMotionMaster()->MoveWaypoint(false);
+                        }
+                        break;
+                    case 976: // Tanaris
+                        if (Creature* pCreature = spawnCreature->FindNearestCreature(7583, 30.0f, true)) // NPC_SPRINKLE
+                        {
+                            spawnCreature->GetMotionMaster()->MoveFollow(pCreature, 0.6f, M_PI_F);
+                            pCreature->MonsterTextEmote(-1900172);
+                            pCreature->SetWalk(false);
+                            pCreature->GetMotionMaster()->MoveWaypoint(false);
+                        }
+                        break;
+                    case 2255: // Winterspring
+                        if (Creature* pCreature = spawnCreature->FindNearestCreature(10978, 30.0f, true)) // NPC_LEGACKI
+                        {
+                            spawnCreature->GetMotionMaster()->MoveFollow(pCreature, 0.6f, M_PI_F);
+                            pCreature->MonsterTextEmote(-1900173);
+                            pCreature->SetWalk(false);
+                            pCreature->GetMotionMaster()->MoveWaypoint(false);
+                        }
+                        break;
+                }
+                break;
+            }
+        }
     }
 }
 

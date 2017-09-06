@@ -316,6 +316,7 @@ void TradeData::FillTransactionLog(TransactionPart& log) const
         {
             log.itemsCount[i] = item->GetCount();
             log.itemsEntries[i] = item->GetEntry();
+            log.itemsGuid[i] = item->GetGUIDLow();
         }
     }
 }
@@ -4389,6 +4390,9 @@ void Player::BuildPlayerRepop()
 
 void Player::ResurrectPlayer(float restore_percent, bool applySickness)
 {
+    // Interrupt resurrect spells
+    InterruptSpellsCastedOnMe(false, true);
+
     // remove death flag + set aura
     SetByteValue(UNIT_FIELD_BYTES_1, 3, 0x00);
 
@@ -4751,6 +4755,9 @@ void Player::RepopAtGraveyard()
     }
     else
         ClosestGrave = sObjectMgr.GetClosestGraveYard(GetPositionX(), GetPositionY(), GetPositionZ(), GetMapId(), GetTeam());
+
+    // Interrupt resurrect spells
+    InterruptSpellsCastedOnMe(false, true);
 
     // stop countdown until repop
     m_deathTimer = 0;
@@ -12426,9 +12433,10 @@ uint32 Player::CountFreeInventorySlots() const
             ++freeSlots;
     for (int i = INVENTORY_SLOT_BAG_START; i < INVENTORY_SLOT_BAG_END; ++i)
         if (Bag* pBag = (Bag*)GetItemByPos(INVENTORY_SLOT_BAG_0, i))
-            for (uint32 j = 0; j < pBag->GetBagSize(); ++j)
-                if (!GetItemByPos(i, j))
-                    ++freeSlots;
+            if (pBag->GetProto()->Class == ITEM_CLASS_CONTAINER && pBag->GetProto()->SubClass == ITEM_SUBCLASS_CONTAINER)
+                for (uint32 j = 0; j < pBag->GetBagSize(); ++j)
+                    if (!GetItemByPos(i, j))
+                        ++freeSlots;
     return freeSlots;
 }
 
@@ -14830,10 +14838,10 @@ void Player::_LoadInventory(QueryResult *result, uint32 timediff)
         do
         {
             Field *fields = result->Fetch();
-            uint32 bag_guid  = fields[10].GetUInt32();
-            uint8  slot      = fields[11].GetUInt8();
+            uint32 bag_guid     = fields[10].GetUInt32();
+            uint8  slot         = fields[11].GetUInt8();
             uint32 item_lowguid = fields[12].GetUInt32();
-            uint32 item_id   = fields[13].GetUInt32();
+            uint32 item_id      = fields[13].GetUInt32();
 
             ItemPrototype const * proto = ObjectMgr::GetItemPrototype(item_id);
 
@@ -14842,6 +14850,18 @@ void Player::_LoadInventory(QueryResult *result, uint32 timediff)
                 CharacterDatabase.PExecute("DELETE FROM character_inventory WHERE item = '%u'", item_lowguid);
                 CharacterDatabase.PExecute("DELETE FROM item_instance WHERE guid = '%u'", item_lowguid);
                 sLog.outError("Player::_LoadInventory: Player %s has an unknown item (id: #%u) in inventory, deleted.", GetName(), item_id);
+                continue;
+            }
+
+            // Duplicate check. Player listed item in AH and then immediately relogged, before the item
+            // was deleted from the inventory in the DB
+            if (Item *item = sAuctionMgr.GetAItem(item_lowguid))
+            {
+                std::stringstream oss;
+                oss << "Duplicate item (via AH) " << item_id << " GUID:" << item_lowguid << ", count: " << item->GetCount() << ", bag: " << bag_guid << ", slot: " << uint32(slot);
+                CharacterDatabase.PExecute("DELETE FROM character_inventory WHERE item = '%u'", item_lowguid);
+                GetSession()->ProcessAnticheatAction("ItemCheck", oss.str().c_str(), CHEAT_ACTION_LOG);
+                DETAIL_LOG(oss.str().c_str());
                 continue;
             }
 
@@ -14866,7 +14886,7 @@ void Player::_LoadInventory(QueryResult *result, uint32 timediff)
             if (itemGuids.find(item_lowguid) != itemGuids.end())
             {
                 std::stringstream oss;
-                oss << "Duplicate item " << item->GetEntry() << " GUID:" << item->GetGUIDLow() << " count:" << item->GetCount() << " bag:" << bag_guid << " slot:" << uint32(slot);
+                oss << "Duplicate item " << item_id << " GUID:" << item_lowguid << ", count: " << item->GetCount() << ", bag: " << bag_guid << ", slot: " << uint32(slot);
                 GetSession()->ProcessAnticheatAction("ItemCheck", oss.str().c_str(), CHEAT_ACTION_LOG);
             }
             itemGuids.insert(item_lowguid);

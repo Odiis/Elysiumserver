@@ -5259,7 +5259,7 @@ void Aura::PeriodicTick(SpellEntry const* sProto, AuraType auraType, uint32 data
             pCaster->ProcDamageAndSpell(target, procAttacker, procVictim, procEx, gain, BASE_ATTACK, spellProto);
 
             // Grande tenue de marchereve (Druide T3)
-            if (spellProto->IsFitToFamily<SPELLFAMILY_DRUID, CF_DRUID_REJUVENATION>())
+            if (spellProto->IsFitToFamily<SPELLFAMILY_DRUID, CF_DRUID_REJUVENATION, CF_DRUID_REGROWTH>())
             {
                 Unit::AuraList const& auraClassScripts = pCaster->GetAurasByType(SPELL_AURA_OVERRIDE_CLASS_SCRIPTS);
                 for (Unit::AuraList::const_iterator itr = auraClassScripts.begin(); itr != auraClassScripts.end(); ++itr)
@@ -5267,7 +5267,7 @@ void Aura::PeriodicTick(SpellEntry const* sProto, AuraType auraType, uint32 data
                     uint32 triggered_spell_id = 0;
 
                     // Aura giving mana / health at recuperation tick
-                    if ((*itr)->GetModifier()->m_miscvalue == 4533 && roll_chance_i(50))
+                    if ((*itr)->GetModifier()->m_miscvalue == 4533 && spellProto->IsFitToFamily<SPELLFAMILY_DRUID, CF_DRUID_REJUVENATION>() && roll_chance_i(50))
                     {
                         switch (target->getPowerType())
                         {
@@ -5282,7 +5282,7 @@ void Aura::PeriodicTick(SpellEntry const* sProto, AuraType auraType, uint32 data
                                 break;
                         }
                     }
-                    else if ((*itr)->GetModifier()->m_miscvalue == 4537)
+                    else if ((*itr)->GetModifier()->m_miscvalue == 4537 && spellProto->IsFitToFamily<SPELLFAMILY_DRUID, CF_DRUID_REGROWTH>())
                         triggered_spell_id = 28750;
                     if (triggered_spell_id)
                         pCaster->CastSpell(target, triggered_spell_id, true);
@@ -5676,7 +5676,7 @@ SpellAuraHolder::SpellAuraHolder(SpellEntry const* spellproto, Unit *target, Wor
     m_stackAmount(1), m_removeMode(AURA_REMOVE_BY_DEFAULT), m_AuraDRGroup(DIMINISHING_NONE), m_timeCla(1000),
     m_permanent(false), m_isRemovedOnShapeLost(true), m_deleted(false), m_in_use(0),
     m_debuffLimitAffected(false), m_debuffLimitScore(0), _heartBeatRandValue(0), _pveHeartBeatData(nullptr),
-    m_spellTriggered(false)
+    m_spellTriggered(false), m_AuraDRLevel(DIMINISHING_LEVEL_1)
 {
     MANGOS_ASSERT(target);
     MANGOS_ASSERT(spellproto && spellproto == sSpellMgr.GetSpellEntry(spellproto->Id) && "`info` must be pointer to sSpellStore element");
@@ -6245,11 +6245,7 @@ void SpellAuraHolder::Update(uint32 diff)
     // PvP
     if (_heartBeatRandValue)
     {
-        Unit* pTarget = GetTarget();
-        float diminishRate = 1.0f;
-        if (pTarget)
-            diminishRate = GetDiminishingRate(pTarget->GetDiminishing(this->m_AuraDRGroup) - 1);
-
+        float diminishRate = GetDiminishingRate(m_AuraDRLevel);
         float elapsedTime = (m_maxDuration - m_duration) / 1000.0f;
         float averageBreakTime = 12.0f * diminishRate; // 50% chance to break after 12 secs
         float maxBreakTime = 15.0f * diminishRate;
@@ -6261,7 +6257,7 @@ void SpellAuraHolder::Update(uint32 diff)
                            elapsedTime, m_maxDuration / 1000, currHeartBeatValue, _heartBeatRandValue);
         if (_heartBeatRandValue <=  currHeartBeatValue)
         {
-            if (pTarget)
+            if (Unit* pTarget = GetTarget())
                 pTarget->RemoveSpellAuraHolder(this);
             return;
         }
@@ -6750,6 +6746,12 @@ void Aura::CalculatePeriodic(Player * modOwner, bool create)
 // Battements de coeur (chance de briser les CC)
 void SpellAuraHolder::CalculateHeartBeat(Unit* caster, Unit* target)
 {
+    if (_pveHeartBeatData)
+    {
+        delete _pveHeartBeatData;
+        _pveHeartBeatData = nullptr;
+    }
+
     _heartBeatRandValue = 0;
 
     // Ni les sorts permanents, ni les sorts positifs ne sont affectes.

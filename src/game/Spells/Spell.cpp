@@ -316,6 +316,7 @@ Spell::Spell(Unit* caster, SpellEntry const *info, bool triggered, ObjectGuid or
     gameObjTarget = nullptr;
     focusObject = nullptr;
     m_triggeredByAuraSpell  = nullptr;
+    m_triggeredByAuraBasePoints = 0;
 
     //Auto Shot & Shoot
     m_autoRepeat = IsAutoRepeatRangedSpell(m_spellInfo);
@@ -1306,7 +1307,7 @@ void Spell::DoAllEffectOnTarget(TargetInfo *target)
             }
         }
         // Sunder Armor triggers weapon proc as well as normal procs despite dealing no damage
-        if (m_caster->GetTypeId() == TYPEID_PLAYER && m_spellInfo->IsFitToFamilyMask<CF_WARRIOR_SUNDER_ARMOR>())
+        if (m_caster->GetTypeId() == TYPEID_PLAYER && m_spellInfo->IsFitToFamily<SPELLFAMILY_WARRIOR, CF_WARRIOR_SUNDER_ARMOR>() && missInfo == SPELL_MISS_NONE)
             ((Player*)m_caster)->CastItemCombatSpell(unitTarget, BASE_ATTACK);
 
         // Fill base damage struct (unitTarget - is real spell target)
@@ -1524,6 +1525,7 @@ void Spell::DoSpellHitOnUnit(Unit *unit, uint32 effectMask)
         m_spellAuraHolder = CreateSpellAuraHolder(m_spellInfo, unit, realCaster, m_CastItem);
         m_spellAuraHolder->SetTriggered(IsTriggered());
         m_spellAuraHolder->setDiminishGroup(m_diminishGroup);
+        m_spellAuraHolder->setDiminishLevel(m_diminishLevel);
     }
     else
         m_spellAuraHolder = nullptr;
@@ -3000,7 +3002,9 @@ void Spell::prepare(Aura* triggeredByAura)
 {
 
     m_spellState = SPELL_STATE_PREPARING;
-    m_delayed = m_spellInfo->speed > 0.0f || (m_spellInfo->IsCCSpell() && m_targets.getUnitTarget() && m_targets.getUnitTarget()->IsPlayer());
+    m_delayed = m_spellInfo->speed > 0.0f 
+        || (m_spellInfo->IsCCSpell() && m_targets.getUnitTarget() && m_targets.getUnitTarget()->IsPlayer())
+        || IsSpellHaveEffect(m_spellInfo, SPELL_EFFECT_HEALTH_LEECH);
 
     if (m_caster->GetTransport())
     {
@@ -3017,8 +3021,10 @@ void Spell::prepare(Aura* triggeredByAura)
         m_castOrientation = m_caster->GetOrientation();
     }
 
-    if (triggeredByAura)
-        m_triggeredByAuraSpell  = triggeredByAura->GetSpellProto();
+    if (triggeredByAura) {
+        m_triggeredByAuraSpell = triggeredByAura->GetSpellProto();
+        m_triggeredByAuraBasePoints = triggeredByAura->GetBasePoints();
+    }
 
     try
     {
@@ -5079,6 +5085,9 @@ SpellCastResult Spell::CheckCast(bool strict)
             {
                 Player* casterOwner = m_caster->GetCharmerOrOwnerPlayerOrPlayerItself();
                 Player* targetOwner = target->GetCharmerOrOwnerPlayerOrPlayerItself();
+
+                if (!casterOwner && !targetOwner)
+                    return SPELL_FAILED_BAD_TARGETS;
 
                 if (m_spellInfo->Id == 7266 && targetOwner && targetOwner->duel && !casterOwner->IsInDuelWith(targetOwner))
                 {
@@ -7941,11 +7950,19 @@ void Spell::OnSpellLaunch()
     if (!m_caster || !m_caster->IsInWorld())
         return;
 
-    if (m_spellInfo->Id == 21651 &&
-            sLockStore.LookupEntry(m_targets.getGOTarget()->GetGOInfo()->GetLockId())->Index[1] == LOCKTYPE_SLOW_OPEN)
+    // Make sure the player is sending a valid GO target and lock ID. SPELL_EFFECT_OPEN_LOCK
+    // can succeed with a lockId of 0
+    if (m_spellInfo->Id == 21651)
     {
-        Spell *visual = new Spell(m_caster, sSpellMgr.GetSpellEntry(24390), true);
-        visual->prepare();
+        if (GameObject *go = m_targets.getGOTarget())
+        {
+            LockEntry const *lockInfo = sLockStore.LookupEntry(go->GetGOInfo()->GetLockId());
+            if (lockInfo && lockInfo->Index[1] == LOCKTYPE_SLOW_OPEN)
+            {
+                Spell *visual = new Spell(m_caster, sSpellMgr.GetSpellEntry(24390), true);
+                visual->prepare();
+            }
+        }
     }
 
     unitTarget = m_targets.getUnitTarget();

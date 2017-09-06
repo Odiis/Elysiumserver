@@ -2395,7 +2395,7 @@ void Unit::AttackerStateUpdate(Unit *pVictim, WeaponAttackType attType, bool ext
         AddExtraAttackOnUpdate();
 
     // melee attack spell casted at main hand attack only
-    if (attType == BASE_ATTACK && m_currentSpells[CURRENT_MELEE_SPELL])
+    if (attType == BASE_ATTACK && m_currentSpells[CURRENT_MELEE_SPELL] && !extra)
     {
         m_currentSpells[CURRENT_MELEE_SPELL]->cast();
         Spell* spell = m_currentSpells[CURRENT_MELEE_SPELL];
@@ -2750,8 +2750,10 @@ float Unit::MeleeSpellMissChance(Unit *pVictim, WeaponAttackType attType, int32 
     float hitChance = 0.0f;
 
     // PvP - PvE melee chances
-    if (pVictim->GetTypeId() == TYPEID_PLAYER)
+    if (GetTypeId() == TYPEID_PLAYER && pVictim->GetTypeId() == TYPEID_PLAYER)
         hitChance = 95.0f + skillDiff * 0.04f;  // PvP misschance base is 5.00%
+    else if (pVictim->GetTypeId() == TYPEID_PLAYER)
+        hitChance = 94.4f + skillDiff * 0.04f;
     else if (skillDiff < -10)
         hitChance = 93.4f + (skillDiff + 10) * 0.4f;        // 7% ~ 6.60% base chance to miss for big skill diff
     else
@@ -3097,9 +3099,11 @@ float Unit::MeleeMissChanceCalc(const Unit *pVictim, WeaponAttackType attType) c
         return 0.0f;
 
     float missChance = 5.60f; // The base chance to miss is 5.60%
-    if (pVictim->GetTypeId() == TYPEID_PLAYER)
+
+    // The base chance to miss in PvP is 5%
+    if (GetTypeId() == TYPEID_PLAYER && pVictim->GetTypeId() == TYPEID_PLAYER)
     {
-        missChance = 5.00f;  // The base chance to miss in PvP is 5%
+        missChance = 5.00f;
     }
 
     // DualWield - white damage has an additional 19% miss penalty
@@ -6089,6 +6093,9 @@ int32 Unit::DealHeal(Unit *pVictim, uint32 addhealth, SpellEntry const *spellPro
 
     if (GetTypeId() == TYPEID_UNIT && ((Creature*)this)->IsTotem() && ((Totem*)this)->GetTotemType() != TOTEM_STATUE)
         unit = GetOwner();
+
+    if (!unit)
+        return 0;
 
     if (unit->GetTypeId() == TYPEID_PLAYER)
         unit->SendHealSpellLog(pVictim, spellProto->Id, addhealth, critical);
@@ -10612,15 +10619,21 @@ float Unit::GetCombatReach(Unit const* pVictim, bool forMeleeRange /*=true*/, fl
 
 bool Unit::CanReachWithMeleeAttack(Unit const* pVictim, float flat_mod /*= 0.0f*/) const
 {
+    float x = GetPositionX(), y = GetPositionY(), z = GetPositionZ();
+
+    return CanReachWithMeleeAttackAtPosition(pVictim, x, y, z, flat_mod);
+}
+
+bool Unit::CanReachWithMeleeAttackAtPosition(Unit const* pVictim, float x, float y, float z, float flat_mod /*= 0.0f*/) const
+{
     if (!pVictim || !pVictim->IsInWorld())
         return false;
 
     float reach = GetCombatReach(pVictim, true, flat_mod);
 
-    // This check is not related to bounding radius
-    float dx = GetPositionX() - pVictim->GetPositionX();
-    float dy = GetPositionY() - pVictim->GetPositionY();
-    float dz = GetPositionZ() - pVictim->GetPositionZ();
+    float dx = x - pVictim->GetPositionX();
+    float dy = y - pVictim->GetPositionY();
+    float dz = z - pVictim->GetPositionZ();
 
     return (dx * dx + dy * dy < reach * reach) && ((dz * dz) < MELEE_Z_LIMIT);
 }
@@ -11130,7 +11143,7 @@ public:
 
         if (unit->getThreatManager().getThreat(_from) > 0.1f)
             unit->AddThreat(_to, unit->getThreatManager().getThreat(_from));
-        else if (unit->getVictim() == _from) // Si on aggro sans faire de degat
+        else if (unit->getVictim() == _from && unit->AI()) // Si on aggro sans faire de degat
             unit->AI()->AttackStart(_to);
         else
             return;
