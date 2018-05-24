@@ -126,6 +126,13 @@ struct QuestGreetingLocale
     uint32 EmoteDelay;
 };
 
+enum
+{
+    QUESTGIVER_CREATURE = 0,
+    QUESTGIVER_GAMEOBJECT = 1,
+    QUESTGIVER_TYPE_MAX = 2,
+};
+
 typedef UNORDERED_MAP<uint32,CreatureData> CreatureDataMap;
 typedef CreatureDataMap::value_type CreatureDataPair;
 
@@ -343,6 +350,8 @@ enum ConditionType
     CONDITION_GENDER                = 35,                   // 0=male, 1=female, 2=none (see enum Gender)
     CONDITION_DEAD_OR_AWAY          = 36,                   // value1: 0=player dead, 1=player is dead (with group dead), 2=player in instance are dead, 3=creature is dead
                                                             // value2: if != 0 only consider players in range of this value
+    CONDITION_WOW_PATCH             = 37,                   // value1: wow patch setting from config (0-10)
+                                                            // value2: 0, 1 or 2 (0: equal to, 1: equal or higher than, 2: equal or less than)
 };
 
 enum ConditionSource                                        // From where was the condition called?
@@ -375,6 +384,9 @@ class PlayerCondition
 
         // Checks if the player meets the condition
         bool Meets(Player const* pPlayer, Map const* map, WorldObject const* source, ConditionSource conditionSourceType) const;
+
+        // Checks if the patch is valid
+        bool CheckPatch() const;
 
         Team GetTeam() const
         {
@@ -673,6 +685,8 @@ class ObjectMgr
             return mGameObjectForQuestSet.find(entry) != mGameObjectForQuestSet.end();
         }
 
+        static char* const GetPatchName();
+
         GossipText const* GetGossipText(uint32 Text_ID) const;
 
         WorldSafeLocsEntry const *GetClosestGraveYard(float x, float y, float z, uint32 MapId, Team team);
@@ -854,8 +868,9 @@ class ObjectMgr
         void FreeAuctionID(uint32 id);
         uint32 GenerateGuildId() { return m_GuildIds.Generate(); }
         uint32 GenerateGroupId() { return m_GroupIds.Generate(); }
-        uint32 GenerateItemTextID() { return m_ItemGuids.Generate(); }
+        uint32 GenerateItemTextID() { return m_ItemTextIds.Generate(); }
         uint32 GenerateMailID() { return m_MailIds.Generate(); }
+        uint32 GeneratePetitionID() { return m_PetitionIds.Generate(); }
         uint32 GeneratePetNumber();
 
         void GenerateItemLowGuidRange(uint32& first, uint32& last) { m_ItemGuids.GenerateRange(first, last); }
@@ -1012,10 +1027,10 @@ class ObjectMgr
         int32 GetDBCLocaleIndex() const { return DBCLocaleIndex; }
         void SetDBCLocaleIndex(uint32 lang) { DBCLocaleIndex = GetIndexForLocale(LocaleConstant(lang)); }
 
-        QuestGreetingLocale const* GetQuestGreetingLocale(int32 entry) const
+        QuestGreetingLocale const* GetQuestGreetingLocale(uint32 entry, uint8 type) const
         {
-            auto itr = mQuestGreetingLocaleMap.find(entry);
-            if (itr == mQuestGreetingLocaleMap.end()) return nullptr;
+            auto itr = mQuestGreetingLocaleMap[type].find(entry);
+            if (itr == mQuestGreetingLocaleMap[type].end()) return nullptr;
             return &itr->second;
         }
 
@@ -1230,9 +1245,9 @@ class ObjectMgr
 
         // first free id for selected id type
         IdGenerator<uint32> m_GuildIds;
-        IdGenerator<uint32> m_ItemTextIds;
         IdGenerator<uint32> m_MailIds;
         IdGenerator<uint32> m_GroupIds;
+        IdGenerator<uint32> m_PetitionIds;
         uint32              m_NextPetNumber;
         std::set<uint32>    m_AuctionsIds;
         uint32              m_NextAuctionId;
@@ -1248,6 +1263,7 @@ class ObjectMgr
         // first free low guid for selected guid type
         ObjectGuidGenerator<HIGHGUID_PLAYER>     m_CharGuids;
         ObjectSafeGuidGenerator<HIGHGUID_ITEM>   m_ItemGuids;   // Needs to be thread safe
+        ObjectSafeGuidGenerator<HIGHGUID_ITEM>   m_ItemTextIds;
         ObjectGuidGenerator<HIGHGUID_CORPSE>     m_CorpseGuids;
 
         QuestMap            mQuestTemplates;
@@ -1347,7 +1363,7 @@ class ObjectMgr
         NpcTextLocaleMap mNpcTextLocaleMap;
         PageTextLocaleMap mPageTextLocaleMap;
         MangosStringLocaleMap mMangosStringLocaleMap;
-        QuestGreetingLocaleMap mQuestGreetingLocaleMap;
+        QuestGreetingLocaleMap mQuestGreetingLocaleMap[QUESTGIVER_TYPE_MAX];
         GossipMenuItemsLocaleMap mGossipMenuItemsLocaleMap;
         PointOfInterestLocaleMap mPointOfInterestLocaleMap;
         AreaLocaleMap mAreaLocaleMap;

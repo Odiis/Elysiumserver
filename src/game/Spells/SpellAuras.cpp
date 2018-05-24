@@ -655,9 +655,11 @@ void AreaAura::Update(uint32 diff)
                 // false if an area aura of the same spellid exists on the target
                 bool apply = true;
 
+                Unit *target = *tIter;
+
                 // we need to ignore present caster self applied area auras sometimes
                 // in cases where this is the only aura applied for this spell effect
-                Unit::SpellAuraHolderBounds spair = (*tIter)->GetSpellAuraHolderBounds(GetId());
+                Unit::SpellAuraHolderBounds spair = target->GetSpellAuraHolderBounds(GetId());
                 for (Unit::SpellAuraHolderMap::const_iterator i = spair.first; i != spair.second; ++i)
                 {
                     if (i->second->IsDeleted())
@@ -687,26 +689,26 @@ void AreaAura::Update(uint32 diff)
                     continue;
 
                 // Skip some targets (TODO: Might require better checks, also unclear how the actual caster must/can be handled)
-                if (GetSpellProto()->AttributesEx3 & SPELL_ATTR_EX3_TARGET_ONLY_PLAYER && (*tIter)->GetTypeId() != TYPEID_PLAYER)
+                if (GetSpellProto()->AttributesEx3 & SPELL_ATTR_EX3_TARGET_ONLY_PLAYER && target->GetTypeId() != TYPEID_PLAYER)
                     continue;
 
-                if (SpellEntry const *actualSpellInfo = sSpellMgr.SelectAuraRankForLevel(GetSpellProto(), (*tIter)->getLevel()))
+                if (SpellEntry const *actualSpellInfo = sSpellMgr.SelectAuraRankForLevel(GetSpellProto(), target->getLevel()))
                 {
                     int32 actualBasePoints = m_currentBasePoints;
                     // recalculate basepoints for lower rank (all AreaAura spell not use custom basepoints?)
                     if (actualSpellInfo != GetSpellProto())
                         actualBasePoints = actualSpellInfo->CalculateSimpleValue(m_effIndex);
 
-                    SpellAuraHolder *holder = (*tIter)->GetSpellAuraHolder(actualSpellInfo->Id, GetCasterGuid());
+                    SpellAuraHolder *holder = target->GetSpellAuraHolder(actualSpellInfo->Id, GetCasterGuid());
 
                     bool addedToExisting = true;
                     if (!holder)
                     {
-                        holder = CreateSpellAuraHolder(actualSpellInfo, (*tIter), caster);
+                        holder = CreateSpellAuraHolder(actualSpellInfo, target, caster);
                         addedToExisting = false;
                     }
 
-                    AreaAura *aur = new AreaAura(actualSpellInfo, m_effIndex, &actualBasePoints, holder, (*tIter), caster, nullptr);
+                    AreaAura *aur = new AreaAura(actualSpellInfo, m_effIndex, &actualBasePoints, holder, target, caster, nullptr);
                     holder->AddAura(aur, m_effIndex);
 
                     if (!holder->IsPassive() && !holder->IsPermanent())
@@ -721,18 +723,18 @@ void AreaAura::Update(uint32 diff)
 
                     if (addedToExisting)
                     {
-                        (*tIter)->AddAuraToModList(aur);
+                        target->AddAuraToModList(aur);
                         holder->SetInUse(true);
                         aur->ApplyModifier(true, true);
                         holder->SetInUse(false);
                     }
-                    else
-                        (*tIter)->AddSpellAuraHolder(holder);
+                    else if (!target->AddSpellAuraHolder(holder))
+                        holder = nullptr;
 
-                    DEBUG_LOG("Added aura %u to holder for spell %u on %s", m_effIndex, GetId(), (*tIter)->GetName());
+                    DETAIL_LOG("Added aura %u to holder for spell %u on %s", m_effIndex, GetId(), target->GetName());
 
                     // Add holder to spell if it's channeled so the updates are synced
-                    if (IsChanneled() && !addedToExisting)
+                    if (holder && IsChanneled() && !addedToExisting)
                     {
                         if (Spell *spell = caster->GetCurrentSpell(CURRENT_CHANNELED_SPELL))
                         {
@@ -1216,10 +1218,28 @@ void Aura::TriggerSpell()
 //                    case 27601: break;
 //                    // Five Fat Finger Exploding Heart Technique
 //                    case 27673: break;
-//                    // Nitrous Boost
-//                    case 27746: break;
-//                    // Steam Tank Passive
-//                    case 27747: break;
+                    // Nitrous Boost
+                    case 27746:
+                    {
+                        if (target->GetPower(POWER_MANA) >= 10)
+                        {
+                            target->ModifyPower(POWER_MANA, -10);
+                            target->SendEnergizeSpellLog(target, 27746, -10, POWER_MANA);
+                        }
+                        else
+                            target->RemoveAurasDueToSpell(27746);
+                        return;
+                    }
+                    // Steam Tank Passive
+                    case 27747:
+                    {
+                        uint32 tonkmana = target->GetPower(POWER_MANA);
+                        if (tonkmana < 100)
+                        {
+                            target->ModifyPower(POWER_MANA, tonkmana > 90 ? (100 - tonkmana) : 10);
+                        }
+                        return;
+                    }
                     case 27808:                             // Frost Blast
                     {
                         int32 bpDamage = triggerTarget->GetMaxHealth() * 26 / 100;
@@ -1446,6 +1466,30 @@ void Aura::TriggerSpell()
                 caster->ProcDamageAndSpell(target, (PROC_FLAG_ON_TRAP_ACTIVATION | PROC_FLAG_SUCCESSFUL_AOE), PROC_FLAG_NONE, PROC_EX_NORMAL_HIT, 1, BASE_ATTACK, GetSpellProto());
                 return;
             }
+            // Activate MG Turret
+            case 25026:
+            {
+                if (target->GetPower(POWER_MANA) >= 10)
+                {
+                    target->ModifyPower(POWER_MANA, -10);
+                    target->SendEnergizeSpellLog(target, 25026, -10, POWER_MANA);
+                }
+                else
+                    target->RemoveAurasDueToSpell(25026);
+                break;
+            }
+            // Flamethrower
+            case 25027:
+            {
+                if (target->GetPower(POWER_MANA) >= 10)
+                {
+                    target->ModifyPower(POWER_MANA, -10);
+                    target->SendEnergizeSpellLog(target, 25027, -10, POWER_MANA);
+                }
+                else
+                    target->RemoveAurasDueToSpell(25027);
+                break;;
+            }
         }
     }
 
@@ -1661,6 +1705,15 @@ void Aura::HandleAuraDummy(bool apply, bool Real)
                 }
                 return;
             }
+            case 11403: // Dream Vision
+                if (Unit* caster = GetCaster())
+                    if (Player* casterPlayer = caster->ToPlayer())
+                        if (Pet* guardian = caster->FindGuardianWithEntry(7863))
+                        {
+                            casterPlayer->ModPossessPet(guardian, false, AURA_REMOVE_BY_DEFAULT);
+                            guardian->DisappearAndDie();
+                        }
+                return;
             case 11826:
                 if (m_removeMode != AURA_REMOVE_BY_EXPIRE)
                     return;
@@ -2663,6 +2716,13 @@ void Aura::HandleModPossess(bool apply, bool Real)
         return;
     caster->ModPossess(target, apply, m_removeMode);
     target->AddThreat(caster,target->GetHealth(), false, GetSpellSchoolMask(GetSpellProto()));
+
+    if (!apply && GetId() == 24937) // Controlling Steam Tonk
+    {
+        target->CastSpell(target, 27771, true); // Cast Damaged Tonk
+        caster->CastSpell(caster, 9179, true); // Cast 3 sec Stun on self
+        caster->RemoveAurasDueToSpell(24935); // Unroot player
+    }
 }
 
 void Unit::ModPossess(Unit* target, bool apply, AuraRemoveMode m_removeMode)
@@ -3667,8 +3727,9 @@ void Aura::HandleAuraModSchoolImmunity(bool apply, bool Real)
     target->ApplySpellImmune(GetId(), IMMUNITY_SCHOOL, m_modifier.m_miscvalue, apply);
 
     // remove all flag auras (they are positive, but they must be removed when you are immune)
-    if (GetSpellProto()->AttributesEx & SPELL_ATTR_EX_DISPEL_AURAS_ON_IMMUNITY
-            && GetSpellProto()->AttributesEx2 & SPELL_ATTR_EX2_DAMAGE_REDUCED_SHIELD)
+    if (apply && GetSpellProto()->AttributesEx & SPELL_ATTR_EX_DISPEL_AURAS_ON_IMMUNITY
+              && GetSpellProto()->AttributesEx2 & SPELL_ATTR_EX2_DAMAGE_REDUCED_SHIELD
+              && target->IsPlayer() && !target->isCharmed())
         target->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_IMMUNE_OR_LOST_SELECTION);
 
     // TODO: optimalize this cycle - use RemoveAurasWithInterruptFlags call or something else
@@ -4229,8 +4290,8 @@ void Aura::HandleModPowerRegen(bool apply, bool Real)       // drinking
 
     m_periodicTimer = 5000;
 
-    if (GetTarget()->GetTypeId() == TYPEID_PLAYER && m_modifier.m_miscvalue == POWER_MANA)
-        ((Player*)GetTarget())->UpdateManaRegen();
+    if (m_modifier.m_miscvalue == POWER_MANA)
+        (GetTarget())->UpdateManaRegen();
 
     m_isPeriodic = apply;
 }
@@ -4241,12 +4302,9 @@ void Aura::HandleModPowerRegenPCT(bool /*apply*/, bool Real)
     if (!Real)
         return;
 
-    if (GetTarget()->GetTypeId() != TYPEID_PLAYER)
-        return;
-
     // Update manaregen value
     if (m_modifier.m_miscvalue == POWER_MANA)
-        ((Player*)GetTarget())->UpdateManaRegen();
+        (GetTarget())->UpdateManaRegen();
 }
 
 void Aura::HandleAuraModIncreaseHealth(bool apply, bool Real)
@@ -5003,6 +5061,10 @@ void Aura::HandleSchoolAbsorb(bool apply, bool Real)
             DoneActualBenefit *= caster->CalculateLevelPenalty(GetSpellProto());
 
             m_modifier.m_amount += (int32)DoneActualBenefit;
+
+            // Power Word: Shield generates half the threat as healing for the same amount
+            if (spellProto->IsFitToFamily<SPELLFAMILY_PRIEST, CF_PRIEST_POWER_WORD_SHIELD>() && spellProto->Id != 27779)
+                caster->getHostileRefManager().threatAssist(caster, float(m_modifier.m_amount) * 0.25, spellProto);
         }
     }
 }
@@ -5227,7 +5289,17 @@ void Aura::PeriodicTick(SpellEntry const* sProto, AuraType auraType, uint32 data
 
             // Don't heal target if it is already at max health
             if (target->GetHealth() == target->GetMaxHealth())
+            {
+                // Trigger Improved Mend Pet even if health is full
+                if (spellProto->IsFitToFamily<SPELLFAMILY_HUNTER, CF_HUNTER_MEND_PET>())
+                {
+                    uint32 procAttacker = PROC_FLAG_ON_DO_PERIODIC;
+                    uint32 procVictim = PROC_FLAG_ON_TAKE_PERIODIC;
+                    uint32 procEx = PROC_EX_NORMAL_HIT | PROC_EX_PERIODIC_POSITIVE;
+                    pCaster->ProcDamageAndSpell(target, procAttacker, procVictim, procEx, 1, BASE_ATTACK, spellProto);
+                }
                 return;
+            }
 
             // heal for caster damage (must be alive)
             if (target != pCaster && spellProto->SpellVisual == 163 && !pCaster->isAlive())
@@ -6558,7 +6630,6 @@ void SpellAuraHolder::CalculateForDebuffLimit()
 {
     m_debuffLimitAffected = true;
     m_debuffLimitScore = 0;
-
 
     // First, some exceptions
     switch (m_spellProto->SpellFamilyName)

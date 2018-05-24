@@ -373,6 +373,11 @@ void Spell::EffectSchoolDMG(SpellEffectIndex effect_idx)
                             damage *= 0.25;
                          break;
                     }
+                    case 24933:                             // Cannon (Darkmoon Steam Tonk)
+                    {
+                        m_caster->CastSpell(unitTarget, 27766, true);
+                        break;
+                    }
                 }
                 break;
             }
@@ -629,16 +634,16 @@ void Spell::EffectDummy(SpellEffectIndex eff_idx)
                     uint32 spell_id = 0;
                     uint32 roll = urand(0, 99);
                     if (roll < 25)                          // Fireball (25% chance)
-                        spell_id = 15662;
+                        spell_id = 11921;
                     else if (roll < 50)                     // Frostbolt (25% chance)
-                        spell_id = 11538;
+                        spell_id = 13322;
                     else if (roll < 70)                     // Chain Lighting (20% chance)
                         spell_id = 21179;
                     else if (roll < 77)                     // Polymorph (10% chance, 7% to target)
-                        spell_id = 14621;
+                        spell_id = 13323;
                     else if (roll < 80)                     // Polymorph (10% chance, 3% to self, backfire)
                     {
-                        spell_id = 14621;
+                        spell_id = 13323;
                         newTarget = m_caster;
                     }
                     else if (roll < 95)                     // Enveloping Winds (15% chance)
@@ -2318,10 +2323,14 @@ void Spell::DoCreateItem(SpellEffectIndex eff_idx, uint32 itemtype)
         case SPELL_AV_MARK_LOSER:
             bgType = BATTLEGROUND_AV;
             break;
+        case SPELL_WS_ALLY_WINNER:
+        case SPELL_WS_HORDE_WINNER:
+        case SPELL_WS_OLD_LOSER:
         case SPELL_WS_MARK_WINNER:
         case SPELL_WS_MARK_LOSER:
             bgType = BATTLEGROUND_WS;
             break;
+        case SPELL_AB_OLD_WINNER:
         case SPELL_AB_MARK_WINNER:
         case SPELL_AB_MARK_LOSER:
             bgType = BATTLEGROUND_AB;
@@ -2860,7 +2869,8 @@ void Spell::EffectDispel(SpellEffectIndex eff_idx)
         SpellAuraHolder *holder = itr->second;
         if ((1 << holder->GetSpellProto()->Dispel) & dispelMask)
         {
-            if (holder->GetSpellProto()->Dispel == DISPEL_MAGIC)
+            if (holder->GetSpellProto()->Dispel == DISPEL_MAGIC || 
+                holder->GetSpellProto()->Dispel == DISPEL_POISON)
             {
                 if (checkFaction)
                 {
@@ -3241,6 +3251,8 @@ void Spell::EffectSummonGuardian(SpellEffectIndex eff_idx)
 
     if (m_spellInfo->Id == 9515) // Exception for 'Summon Tracking Hound'
         level = m_spellInfo->spellLevel;
+    if (m_spellInfo->Id == 14642 && level > cInfo->maxlevel) // Felhound Minion level cap
+        level = cInfo->maxlevel;
 
     // select center of summon position
     float center_x = m_targets.m_destX;
@@ -3318,6 +3330,16 @@ void Spell::EffectSummonGuardian(SpellEffectIndex eff_idx)
                 {
                     // Stealth
                     spawnCreature->CastSpell(spawnCreature, 2585, true);
+                    p->ModPossessPet(spawnCreature, true, AURA_REMOVE_BY_DEFAULT);
+                }
+                break;
+            }
+            case 11403: // Elixir of Dream Vision
+            {
+                spawnCreature->SetWalk(false);
+                if (Player* p = m_caster->ToPlayer())
+                {
+                    spawnCreature->CastSpell(spawnCreature, 27986, true); // Levitate
                     p->ModPossessPet(spawnCreature, true, AURA_REMOVE_BY_DEFAULT);
                 }
                 break;
@@ -3554,7 +3576,7 @@ void Spell::EffectEnchantItemTmp(SpellEffectIndex eff_idx)
         duration = 1800;                                    // 30 mins
     // some fishing pole bonuses
     else if (m_spellInfo->SpellVisual == 563)
-        duration = 600;                                     // 10 mins
+        duration = enchant_id == 266 ? 300 : 600;           // 10 or 5 mins
     // shaman Rockbiter enchantments
     else if (m_spellInfo->SpellVisual == 58)
         duration = 300;                                     // 5 mins (Ustaag <Nostalrius> : 30 mn post 1.12)
@@ -4410,6 +4432,32 @@ void Spell::EffectScriptEffect(SpellEffectIndex eff_idx)
                     unitTarget->CastSpell(unitTarget, roll_chance_i(50) ? 24714 : 24715, true);
                     return;
                 }
+                case 24936:                                 // RC Tank Control
+                {
+                    if (Creature* pTonk = m_caster->FindNearestCreature(15328, 5, true))
+                    {
+                        pTonk->SetWalk(false);
+                        pTonk->m_spells[0] = 24933;
+                        pTonk->m_spells[1] = 25003;
+                        pTonk->m_spells[2] = 27746;
+                        switch (urand(0, 3))
+                        {
+                            case 0:
+                                pTonk->m_spells[3] = 25026;
+                                break;
+                            case 1:
+                                pTonk->m_spells[3] = 25027;
+                                break;
+                            case 2:
+                                pTonk->m_spells[3] = 27759;
+                                break;
+                            case 3:
+                                pTonk->m_spells[3] = 25024;
+                                break;
+                        }
+                        m_caster->CastSpell(pTonk, 24937, true);
+                    }
+                }
                 case 26004:                                 // Mistletoe
                 {
                     if (!unitTarget)
@@ -5095,6 +5143,12 @@ void Spell::EffectFeedPet(SpellEffectIndex eff_idx)
 
     if (!pet->isAlive())
         return;
+
+    if (!pet->IsWithinLOSInMap(_player))
+    {
+        SendCastResult(SPELL_FAILED_LINE_OF_SIGHT);
+        return;
+    }
 
     int32 benefit = pet->GetCurrentFoodBenefitLevel(foodItem->GetProto()->ItemLevel);
     if (benefit <= 0)
